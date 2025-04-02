@@ -190,7 +190,7 @@ def main_app():
     uploaded_file = st.sidebar.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 
     if uploaded_file:
-        df = pd.read_csv(uploaded_file,encoding="utf-8",errors="replace") if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+        df = pd.read_csv(uploaded_file,encoding="latin1") if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.write(df.dtypes)
         # Generate Pandas Profiling Report
         if st.button("Generate Pandas Profiling Report"):
