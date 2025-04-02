@@ -21,6 +21,17 @@ import matplotlib.pyplot as plt
 import sqlite3
 import hashlib
 
+import os
+import subprocess
+import sys
+
+# Install sweetviz if not installed
+try:
+    import sweetviz
+except ModuleNotFoundError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "sweetviz"])
+    import sweetviz
+
 # Database setup
 def create_users_table():
     conn = sqlite3.connect("users.db")
