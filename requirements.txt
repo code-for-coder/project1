@@ -6,3 +6,4 @@ scikit-learn
 scipy
 tpot
 setuptools
+ydata-profiling
