@@ -1,0 +1,8 @@
+streamlit
+sweetviz
+pandas
+numpy
+sqlite3
+scikit-learn
+scipy
+tpot
