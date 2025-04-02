@@ -460,7 +460,7 @@ elif choice == "Logout":
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.success("Logged out successfully!")
-    st.experimental_rerun() 
+    st.rerun()
 
 if st.session_state["logged_in"]:
     main_app()
