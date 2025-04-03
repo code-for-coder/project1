@@ -19,18 +19,8 @@ import sqlite3
 import seaborn as sns
 import matplotlib.pyplot as plt
 import sqlite3
-import hashlib
+import plotly.express as px
 
-import os
-import subprocess
-import sys
-
-# Install sweetviz if not installed
-try:
-    import sweetviz
-except ModuleNotFoundError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "sweetviz"])
-    import sweetviz
 
 # Database setup
 def create_users_table():
@@ -190,7 +180,7 @@ def main_app():
     uploaded_file = st.sidebar.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 
     if uploaded_file:
-        df = pd.read_csv(uploaded_file,encoding="latin1") if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+        df = pd.read_csv(uploaded_file, encoding="latin1") if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.write(df.dtypes)
         # Generate Pandas Profiling Report
         if st.button("Generate Pandas Profiling Report"):
@@ -387,17 +377,25 @@ def main_app():
             alert_condition = st.selectbox("Condition", [">", "<", "=", ">=", "<="])
             alert_value = st.number_input("Threshold Value")
 
+            # Convert column to numeric, handling NaT/NaN values
+            df[alert_column] = pd.to_numeric(df[alert_column], errors='coerce')
+
+            # Drop NaN values before comparison
+            filtered_df = df[alert_column].dropna()
+
+            alert_triggered = False  # Default
             # Check condition
-            if alert_condition == ">":
-                alert_triggered = df[alert_column].max() > alert_value
-            elif alert_condition == "<":
-                alert_triggered = df[alert_column].min() < alert_value
-            elif alert_condition == "=":
-                alert_triggered = (df[alert_column] == alert_value).any()
-            elif alert_condition == ">=":
-                alert_triggered = df[alert_column].max() >= alert_value
-            elif alert_condition == "<=":
-                alert_triggered = df[alert_column].min() <= alert_value
+            if not filtered_df.empty:  # Ensure column has valid data
+                if alert_condition == ">":
+                    alert_triggered = filtered_df.max() > alert_value
+                elif alert_condition == "<":
+                    alert_triggered = filtered_df.min() < alert_value
+                elif alert_condition == "=":
+                    alert_triggered = (filtered_df == alert_value).any()
+                elif alert_condition == ">=":
+                    alert_triggered = filtered_df.max() >= alert_value
+                elif alert_condition == "<=":
+                    alert_triggered = filtered_df.min() <= alert_value
 
             if alert_triggered:
                 st.warning(f"🚨 Alert! Condition met: {alert_column} {alert_condition} {alert_value}")
@@ -415,7 +413,38 @@ def main_app():
         else:
             st.write("⚠️ Not enough numerical columns to create a correlation heatmap.")
 
+        # Select columns for visualization
+        st.sidebar.header("Visualization Settings")
+        numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+        categorical_columns = df.select_dtypes(include=['object']).columns.tolist()
+        
+        chart_type = st.sidebar.selectbox("Choose Chart Type", ["Scatter Plot", "Bar Chart", "Line Chart", "Pie Chart"])
+        
+        if chart_type == "Pie Chart" and categorical_columns:
+            pie_column = st.sidebar.selectbox("Select Category Column", options=categorical_columns)
+            value_column = st.sidebar.selectbox("Select Numeric Column", options=numeric_columns)
+            
+            st.subheader(f"Pie Chart of {pie_column} by {value_column}")
+            fig = px.pie(df, names=pie_column, values=value_column, title=f"{pie_column} Distribution")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        elif numeric_columns:
+            x_axis = st.sidebar.selectbox("Select X-Axis", options=numeric_columns)
+            y_axis = st.sidebar.selectbox("Select Y-Axis", options=numeric_columns)
 
+            # Generate Chart
+            st.subheader(f"{chart_type} of {y_axis} vs {x_axis}")
+            
+            if chart_type == "Scatter Plot":
+                fig = px.scatter(df, x=x_axis, y=y_axis, title=f"{y_axis} vs {x_axis}")
+            elif chart_type == "Bar Chart":
+                fig = px.bar(df, x=x_axis, y=y_axis, title=f"{y_axis} vs {x_axis}")
+            elif chart_type == "Line Chart":
+                fig = px.line(df, x=x_axis, y=y_axis, title=f"{y_axis} vs {x_axis}")
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No valid columns found for visualization.")
 
 create_users_table()
 
@@ -460,7 +489,7 @@ elif choice == "Logout":
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.success("Logged out successfully!")
-    st.rerun()
+    st.experimental_rerun() 
 
 if st.session_state["logged_in"]:
     main_app()
