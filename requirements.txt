@@ -8,3 +8,4 @@ tpot
 setuptools
 ydata-profiling
 plotly
+openpyxl
