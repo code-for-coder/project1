@@ -78,8 +78,16 @@ def handle_missing_values(df):
             if df[col].dtype == 'object':
                 df[col] = df[col].astype(str)  # Ensure consistent string format
                 mode_value = df[col].mode()[0]  # Get the most frequent value
-                st.write(f"⚠️ Column `{col}` is categorical. Filling missing values with mode: `{mode_value}`")
-                df[col] = df[col].fillna(mode_value)  # Fill missing with mode
+                # Exclude 'nan'/'NaN' strings when finding mode
+                valid_values = df[col][~df[col].isin(['nan', 'NaN'])]
+                if not valid_values.empty:
+                    mode_value = valid_values.mode()[0]
+                    st.write(f"⚠️ Column `{col}` is categorical. Filling missing values with mode: `{mode_value}`")
+                    df[col] = df[col].replace(['nan', 'NaN'], np.nan)  # Convert string 'nan' back to np.nan
+                    df[col] = df[col].fillna(mode_value)  # Fill missing with mode
+                else:
+                    st.write(f"⚠️ No valid non-null values to compute mode for `{col}`. Filling with 'Unknown'")
+                    df[col] = df[col].fillna('Unknown')
 
             # Handle datetime columns
             elif pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -110,9 +118,15 @@ def handle_outliers(df):
             st.write(f"### Checking Outliers in: {col}")
 
             df['outlier'] = iforest.fit_predict(df[[col]])
-            st.write("Outliers detected:", df[df['outlier'] == -1][col])
+            outliers_detected = df[df['outlier'] == -1][col]
 
-            option = st.radio(f"How to handle outliers in {col}?", ['Replace with Median', 'Cap at Percentiles', 'Remove Outliers'], key=col)
+            st.write("Outliers detected:", outliers_detected)
+
+            option = st.radio(
+                f"How to handle outliers in {col}?",
+                ['Do Nothing', 'Replace with Median', 'Cap at Percentiles', 'Remove Outliers'],
+                key=col
+            )
 
             if option == 'Replace with Median':
                 median_value = df[col].median()
@@ -281,62 +295,154 @@ def main_app():
         
         
 
-        # Select time series column
-        time_col = st.selectbox("Select Date/Time Column", df.columns,index=0)
-        value_col = st.selectbox("Select Value Column", df.columns)
+        # Add "No column selected" option
+        time_col = st.selectbox("Select Date Column", ["No column selected"] + list(df.columns), index=0)
+        value_col = st.selectbox("Select Value Column", ["No column selected"] + list(df.columns), index=0)
 
-        # Ensure the selected columns exist
-        if time_col and value_col:
+        # Proceed only if valid columns are selected
+        if time_col != "No column selected" and value_col != "No column selected":
             # Convert to datetime (Ensure correct format)
             df[time_col] = pd.to_datetime(df[time_col], errors='coerce')  
-            df = df.dropna(subset=[time_col, value_col])  # Drop rows where date or value is missing
-            df = df.sort_values(by=time_col)  # Ensure time series order
+            df[value_col] = pd.to_numeric(df[value_col], errors='coerce')  # Ensure value is numeric
 
-            # Ensure value column is numeric
-            df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
+            
+            # Drop rows where date or value is missing
+            df_clean = df.dropna(subset=[time_col, value_col])
+            df_clean = df_clean.sort_values(by=time_col)  # Ensure time series order
+
+            st.write(f"Available observations after cleaning: {len(df_clean)}")
+            st.dataframe(df_clean[[time_col, value_col]])
 
             # Convert datetime to numeric format (Unix timestamp)
-            df["timestamp"] = df[time_col].astype('int64') // 10**9
+            df_clean["timestamp"] = df_clean[time_col].astype('int64') // 10**9
 
             # Ensure enough data points
-            if len(df) > 12:
-                decomposition = seasonal_decompose(df[value_col], period=12, model='additive', extrapolate_trend='freq')
+            if len(df_clean) >= 12:
+                decomposition = seasonal_decompose(df_clean[value_col], period=12, model='additive', extrapolate_trend='freq')
 
-                # Remove NaN values in decomposition results
-                df["trend"] = decomposition.trend
-                df["seasonal"] = decomposition.seasonal
-                df["resid"] = decomposition.resid
-                df.dropna(subset=["trend", "seasonal", "resid"], inplace=True)
+                # Add decomposition results
+                df_clean["trend"] = decomposition.trend
+                df_clean["seasonal"] = decomposition.seasonal
+                df_clean["resid"] = decomposition.resid
 
                 # Detect Anomalies using Z-score
-                df["Z-Score"] = np.abs(zscore(df[value_col]))
-                df["Anomaly"] = df["Z-Score"] > 2.5  # Mark as anomaly if Z-score > 2.5
+                df_clean["Z-Score"] = np.abs(zscore(df_clean[value_col]))
+                df_clean["Anomaly"] = df_clean["Z-Score"] > 2.5
 
                 # Plot Time Series with Trend and Anomalies
                 fig = go.Figure()
-
-                fig.add_trace(go.Scatter(x=df[time_col], y=df[value_col], mode='lines', name='Original Data'))
-                fig.add_trace(go.Scatter(x=df[time_col], y=df["trend"], mode='lines', name='Trend', line=dict(color='orange')))
+                fig.add_trace(go.Scatter(x=df_clean[time_col], y=df_clean[value_col], mode='lines', name='Original Data'))
+                fig.add_trace(go.Scatter(x=df_clean[time_col], y=df_clean["trend"], mode='lines', name='Trend', line=dict(color='orange')))
 
                 # Mark anomalies
-                anomalies = df[df["Anomaly"]]
+                anomalies = df_clean[df_clean["Anomaly"]]
                 fig.add_trace(go.Scatter(x=anomalies[time_col], y=anomalies[value_col], mode='markers',
-                                    name='Anomalies', marker=dict(color='red', size=8)))
+                                        name='Anomalies', marker=dict(color='red', size=8)))
 
                 # Update layout
-                fig.update_layout(title="Trend & Anomaly Detection", xaxis_title="Time", yaxis_title="Value")
+                #fig.update_layout(title="Trend & Anomaly Detection", xaxis_title="Time", yaxis_title="Value")
 
                 # Display the plot
-                st.plotly_chart(fig)
+                #st.plotly_chart(fig)
+                # Trend
+                st.write("### Trend Component")
+                trend_smoothed = df_clean.set_index(time_col)["trend"].resample('W').mean()
+                st.line_chart(trend_smoothed)
+
+                # Trend Analysis based on the smoothed trend line
+                start_trend = trend_smoothed.iloc[0]
+                end_trend = trend_smoothed.iloc[-1]
+
+                if end_trend > start_trend * 1.05:
+                    trend_conclusion = "The trend shows an overall **increasing pattern** over time."
+                elif end_trend < start_trend * 0.95:
+                    trend_conclusion = "The trend shows an overall **decreasing pattern** over time."
+                else:
+                    trend_conclusion = "The trend has remained **relatively stable** over the observed period."
+
+                # Display description and conclusion
+                st.write("""
+                **What it shows:**  
+                The trend component represents the long-term progression or direction in the data over time, ignoring short-term fluctuations and seasonality.
+                """)
+
+                st.write(f"""
+                **Conclusion:**  
+                {trend_conclusion}
+                """)
+
 
                 # Show Decomposition Components
                 st.write("### Seasonal Component")
-                st.line_chart(df["seasonal"])
+                # Resample or average by week to reduce clutter
+                seasonal_smoothed = df_clean.set_index(time_col)["seasonal"].resample('W').mean()
 
+                # Plot using line_chart
+                st.line_chart(seasonal_smoothed)
+
+                # Seasonal analysis (check how strong or fluctuating the seasonal values are)
+                seasonal_range = seasonal_smoothed.max() - seasonal_smoothed.min()
+
+                if seasonal_range > df_clean[value_col].std() * 0.5:
+                    season_conclusion = "There is a **strong seasonal pattern** in the data, with clear periodic fluctuations."
+                elif seasonal_range > df_clean[value_col].std() * 0.2:
+                    season_conclusion = "The data shows a **moderate seasonal pattern** — periodic variations are present but not very strong."
+                else:
+                    season_conclusion = "There is **little to no clear seasonal pattern** detected in the data."
+
+                # Display description and conclusion
+                st.write("""
+                **What it shows:**  
+                The seasonal component captures recurring patterns or cycles within the data, like monthly sales peaks or seasonal demands.
+                """)
+
+                st.write(f"""
+                **Conclusion:**  
+                {season_conclusion}
+                """)
+
+
+                
                 st.write("### Residual (Noise)")
-                st.line_chart(df["resid"])
+                # Resample or average by week to reduce clutter
+                residual_smoothed = df_clean.set_index(time_col)["resid"].resample('W').mean()
+
+                # Plot using line_chart
+                st.line_chart(residual_smoothed)
+
+                # Residual analysis (check how noisy/volatile the residual is)
+                residual_std = residual_smoothed.std()
+
+                if residual_std > df_clean[value_col].std() * 0.5:
+                    residual_conclusion = "The data contains **high residual noise**, indicating significant random fluctuations and possible anomalies."
+                elif residual_std > df_clean[value_col].std() * 0.2:
+                    residual_conclusion = "The residual component shows **moderate noise** — some fluctuations remain unexplained."
+                else:
+                    residual_conclusion = "The residual noise is **low**, meaning the trend and seasonal components explain most of the variability."
+
+                # Display description and conclusion
+                st.write("""
+                **What it shows:**  
+                The residual (noise) component captures irregular, unpredictable variations that are not part of the trend or seasonal pattern.
+                """)
+
+                st.write(f"""
+                **Conclusion:**  
+                {residual_conclusion}
+                """)
+
+
             else:
-                st.warning("Not enough data points for seasonal decomposition. At least 12 observations are required.")
+                st.warning(f"Not enough data points for seasonal decomposition. At least 12 observations are required.")
+                st.write(f"Available observations: {len(df_clean)}")
+                st.write("Here’s the available data:")
+                st.dataframe(df_clean[[time_col, value_col]])
+
+        else:
+            st.info("Please select valid Date/Time and Value columns to continue.")
+
+
+
 
         
 
@@ -364,7 +470,7 @@ def main_app():
             "Total Rows": df.shape[0],
             "Total Columns": df.shape[1],
             "Total Sales (if applicable)": df["Sales"].sum() if "Sales" in df.columns else "N/A",
-            "Average Value per Column": df.describe().mean().to_dict()
+            #"Average Value per Column": df.select_dtypes(include=[np.number]).describe().mean().to_dict()
             }
 
             st.json(kpi_metrics)  # Show KPIs in JSON format
