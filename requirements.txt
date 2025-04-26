@@ -10,3 +10,4 @@ ydata-profiling
 plotly
 openpyxl
 sqlite3
+os
