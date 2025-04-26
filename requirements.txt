@@ -11,3 +11,6 @@ plotly
 openpyxl
 sqlite3
 os
+analysis
+data_entry
+datav
