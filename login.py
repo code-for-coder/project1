@@ -1,25 +1,30 @@
 import sqlite3
 import streamlit as st
-import hashlib  # Import the hashlib library for password hashing
+import hashlib
+import analysis
+import data_entry
+import pandas as pd
+import datav
 
 # Database Path
 DB_PATH = "users.db"
+DATA_ENTRY_DB_PATH = "data_entry.db" #Added Data entry DB path
 
 # --- Database Interaction Functions ---
-def get_connection():
-    """Establishes and returns a database connection.  Creates the database if it doesn't exist."""
+def get_connection(db_path=DB_PATH):
+    """Establishes and returns a database connection. Creates the database if it doesn't exist."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
         return conn
     except sqlite3.Error as e:
         st.error(f"Database Connection Error: {e}")
-        return None  # Important:  Return None on failure
+        return None
 
 def create_users_table():
     """Creates the user table if it doesn't exist."""
     conn = get_connection()
     if conn is None:
-        return  # Exit if connection failed
+        return
     cursor = conn.cursor()
     try:
         cursor.execute(
@@ -44,7 +49,6 @@ def register_user(username, password):
     if conn is None:
         return False, "Failed to connect to the database."
     cursor = conn.cursor()
-    # Hash the password before storing it
     hashed_password = hashlib.sha256(password.encode()).hexdigest()
     try:
         cursor.execute(
@@ -62,8 +66,6 @@ def register_user(username, password):
     finally:
         conn.close()
 
-
-
 def get_user_data(username):
     """Retrieves user data (including hashed password)"""
     conn = get_connection()
@@ -79,22 +81,17 @@ def get_user_data(username):
     finally:
         conn.close()
 
-
 def validate_login(username, password):
     """Validates the username and password against the stored hashed password."""
     user_data = get_user_data(username)
     if user_data is None:
-        return False, "User not found."  # User doesn't exist
-
-    stored_password_hash = user_data[0]  # Get the stored hashed password
-    hashed_password = hashlib.sha256(password.encode()).hexdigest()  # Hash the provided password
-
+        return False, "User not found."
+    stored_password_hash = user_data[0]
+    hashed_password = hashlib.sha256(password.encode()).hexdigest()
     if hashed_password == stored_password_hash:
-        return True, None  # Login successful
+        return True, None
     else:
-        return False, "Invalid password."  # Login failed
-
-
+        return False, "Invalid password."
 
 def update_password(username, new_password):
     """Updates the user's password with a new hashed password."""
@@ -131,7 +128,6 @@ def user_exists(username):
     finally:
         conn.close()
 
-
 def is_same_password(username, new_password):
     """Checks if the new password is the same as the old password."""
     conn = get_connection()
@@ -142,7 +138,7 @@ def is_same_password(username, new_password):
         cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         if result is None:
-            return False  # User not found
+            return False
         stored_password_hash = result[0]
         hashed_new_password = hashlib.sha256(new_password.encode()).hexdigest()
         return stored_password_hash == hashed_new_password
@@ -152,79 +148,171 @@ def is_same_password(username, new_password):
     finally:
         conn.close()
 
+def login_page():
+    """Displays the login page."""
+    if st.button('Admin'):
+        datav.log_main()
+    username = st.sidebar.text_input("Username", key="login_username")
+    password = st.sidebar.text_input("Password", type="password", key="login_password")
+    login_button = st.sidebar.button("Login")
+
+    register_option = st.sidebar.checkbox("Register New User")
+    forgot_password_option = st.sidebar.checkbox("Forgot Password")
+
+    if login_button:
+        success, message = validate_login(username, password)
+        if success:
+            st.success("Logged in successfully!")
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.session_state.page = "main_menu" #set the page to main_menu
+            st.experimental_rerun()
+        else:
+            st.error(message)
+
+    if register_option:
+        st.sidebar.subheader("Register")
+        new_username = st.sidebar.text_input("New Username", key="register_username")
+        new_password = st.sidebar.text_input("New Password", type="password", key="register_password")
+        confirm_password = st.sidebar.text_input("Confirm Password", type="password", key="register_confirm_password")
+        if st.sidebar.button("Register"):
+            if new_password != confirm_password:
+                st.error("Passwords do not match")
+            elif user_exists(new_username):
+                st.error("Username already exists.")
+            else:
+                success, message = register_user(new_username, new_password)
+                if success:
+                    st.success("Registration successful! Please log in.")
+                else:
+                    st.error(f"Registration failed: {message}")
+
+    if forgot_password_option:
+        st.sidebar.subheader("Forgot Password")
+        forgot_username = st.sidebar.text_input("Username", key="forgot_username")
+        new_password = st.sidebar.text_input("New Password", type="password", key="forgot_new_password")
+        confirm_password = st.sidebar.text_input("Confirm New Password", type="password", key="forgot_confirm_password")
+        if st.sidebar.button("Reset Password"):
+            if new_password != confirm_password:
+                st.error("Passwords do not match!")
+            elif not user_exists(forgot_username):
+                st.error("Username not found.")
+            elif is_same_password(forgot_username, new_password):
+                st.warning("New password cannot be same as old password")
+            else:
+                success, message = update_password(forgot_username, new_password)
+                if success:
+                    st.success("Password reset successful! Please log in with new password")
+                else:
+                    st.error(f"Password reset failed: {message}")
+
 
 
 def main():
+    st.link_button("Go to admin","")
     """Main Streamlit application function."""
-    st.title("Login Page")
     create_users_table()  # Ensure the user table exists
-
-    # Initialize session state
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
     if "username" not in st.session_state:
         st.session_state.username = None
+    if "page" not in st.session_state:  # Initialize 'page' here
+        st.session_state.page = "login"
 
-    menu = ["Login", "Register", "Forgot Password", "Logout"] #added logout to menu
-    if st.session_state["logged_in"]:
-        menu.append("Logout")
-    choice = st.sidebar.selectbox("Menu", menu)
+    if st.session_state.page == "login":
+        login_page()  # Show the login page
+    else:
+        #moved show main menu here.
+        show_main_menu()
 
-    if choice == "Register":
-        st.subheader("Create an Account")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+def show_main_menu():
+    """Displays the main menu options after successful login."""
+    st.sidebar.title("Main Menu")
+    menu_options = ["Data Entry", "Analysis", "Logout"]
+    choice = st.sidebar.selectbox("Select an option:", menu_options)
 
-        if st.button("Register"):
-            # Check if the user already exists
-            if user_exists(username):
-                st.warning("Username already exists! Please choose a different one.")
-            else:
-                success, reg_message = register_user(username, password) # Capture the return values
-                if success:
-                    st.success(reg_message + " Please login.")
-                else:
-                    st.error(reg_message)
+    if choice == "Data Entry":
+        st.session_state.page = "data_entry"
 
-    elif choice == "Login":
-        st.subheader("Login to Your Account")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            success, message = validate_login(username, password) # Capture the return values
-            if success:
-                st.session_state["logged_in"] = True
-                st.session_state["username"] = username
-                st.success(message)
-                st.experimental_rerun()
-            else:
-                st.error(message)
-
-    elif choice == "Forgot Password":
-        st.subheader("Reset Your Password")
-        username = st.text_input("Enter your username")
-        new_password = st.text_input("Enter new password", type="password")
-        confirm_password = st.text_input("Confirm new password", type="password")
-
-        if st.button("Reset Password"):
-            if not user_exists(username):  # Check if the user exists
-                st.error("User not found! Please check your username.")
-            elif new_password != confirm_password:
-                st.error("Passwords do not match!")
-            elif is_same_password(username, new_password):  # Check if the new password is same as old
-                st.warning("New password cannot be the same as the current password.")
-            else:
-                success, message = update_password(username, new_password) # Capture the return values
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
+    elif choice == "Analysis":
+        st.session_state.page = "analysis"
 
     elif choice == "Logout":
-        st.session_state["logged_in"] = False
-        st.session_state["username"] = ""
-        st.success("Logged out successfully!")
-        st.experimental_rerun()
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.session_state.page = "login"  # Reset to login page
+
+    #These functions are called everytime
+    if st.session_state.page == "data_entry":
+        show_data_entry()
+    elif st.session_state.page == "analysis":
+        show_analysis_page()
+    elif st.session_state.page == "login":
+        login_page() #show login page again
+    # There is no else condition, so if the page is "main_menu", nothing will be shown
+    # other than the sidebar.
+
+def show_data_entry():
+    """Displays the data entry page"""
+    st.subheader("Data Entry Page")
+    data_entry.main()  # Call data_entry.main()
+
+def show_analysis_page():
+    """Handles the analysis page functionality."""
+    st.subheader("Analysis Page")
+    with st.sidebar:
+        st.subheader("Analysis Options")
+        analysis_options = ["Upload File", "Perform analysis on present data"]
+        st.session_state.analysis_option = st.radio(
+            "Select Data Source:", analysis_options
+        )
+    if st.session_state.analysis_option == "Upload File":
+        uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx", "xls"])
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                st.write("Data from uploaded file:")
+                st.dataframe(df)
+                analysis.main_app(df)
+            except UnicodeDecodeError as e:
+                st.error(f"Error reading file: {e}.  Attempting to read with 'latin1' encoding.")
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df = pd.read_csv(uploaded_file, encoding='latin1')
+                    else:
+                        df = pd.read_excel(uploaded_file)
+                    st.write("Data from uploaded file:")
+                    st.dataframe(df)
+                    analysis.main_app(df)
+                except Exception as e2:
+                    st.error(f"Error reading file with latin1 encoding: {e2}.  Please ensure the file is a valid CSV or Excel file.")
+            except Exception as e:
+                st.error(f"Error reading file: {e}.  Please ensure the file is a valid CSV or Excel file.")
+
+    elif st.session_state.analysis_option == "Perform analysis on present data":
+        conn = get_connection(DATA_ENTRY_DB_PATH)
+        table_list, error = data_entry.get_table_list(conn)  # Get table list from data_entry
+
+        if error:
+            st.error(f"Error fetching table list: {error}")
+        elif table_list:  # Check if the table list is not empty
+            table_name = st.selectbox("Select a table from data_entry.db", table_list)
+            if table_name:
+                df, fetch_error = data_entry.fetch_table_data(conn, table_name)
+                if fetch_error:
+                    st.error(f"Error fetching data from table: {fetch_error}")
+                else:
+                    analysis.main_app(df)
+        else:
+            st.warning("No tables found in data_entry.db to analyze.")
+            # Perform analysis even if no table is shown (you might have a default behavior)
+            st.info("Attempting analysis with no specific table selected...")
+            analysis.main_app(pd.DataFrame())  # Example: Passing an empty DataFrame
+
+
 
 if __name__ == "__main__":
     main()
